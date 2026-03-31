@@ -12,7 +12,8 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000",
-                   "https://expense-app-xxxx.vercel.app",],
+                   "https://expense-app-git-main-takeru0412-debugs-projects.vercel.app",
+                   "https://expense-app.vercel.app",],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
