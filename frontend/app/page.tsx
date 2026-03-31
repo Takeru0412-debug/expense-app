@@ -448,8 +448,8 @@ export default function FinanceDashboard() {
                           boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)",
                         }}
                         itemStyle={{ color: "#1e293b" }}
-                        formatter={(v: number | string | undefined) =>
-                          typeof v === "number" ? `¥${v.toLocaleString()}` : v
+                        formatter={(value) =>
+                          typeof value === "number" ? `¥${value.toLocaleString()}` : String(value ?? "")
                         }
                       />
                     </PieChart>
