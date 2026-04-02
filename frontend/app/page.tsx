@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import {
   Calendar,
@@ -9,13 +10,18 @@ import {
   JapaneseYen,
   Plus,
   X,
+  LogOut,
 } from "lucide-react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
-
-if (!API_BASE_URL) {
-  throw new Error("NEXT_PUBLIC_API_BASE_URL が設定されていません。");
-}
+import {
+  fetchExpenses,
+  createExpense,
+  updateExpense,
+  deleteExpense,
+  fetchMe,
+  type Expense,
+} from "@/lib/api";
+import { getToken, removeToken } from "@/lib/auth";
 
 const CATEGORIES = [
   "食費",
@@ -43,18 +49,11 @@ const COLORS = [
   "#94a3b8",
 ];
 
-interface Expense {
-  id: number;
-  title: string;
-  amount: number;
-  category: string;
-  spent_at: string;
-  memo: string | null;
-  created_at?: string;
-}
-
 export default function FinanceDashboard() {
+  const router = useRouter();
+
   const [mounted, setMounted] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [selectedMonth, setSelectedMonth] = useState("");
@@ -75,27 +74,29 @@ export default function FinanceDashboard() {
   const [editMemo, setEditMemo] = useState("");
   const [isEditSubmitting, setIsEditSubmitting] = useState(false);
 
-  const fetchExpenses = useCallback(async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/expenses/`, {
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error("支出一覧の取得に失敗しました");
-      }
-
-      const data: Expense[] = await response.json();
+      const [me, data] = await Promise.all([fetchMe(), fetchExpenses()]);
+      setUserEmail(me.email);
       setExpenses(data);
     } catch (error) {
-      console.error("Fetch error:", error);
+      console.error("Load error:", error);
+      removeToken();
+      router.push("/login");
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     setMounted(true);
-    fetchExpenses();
-  }, [fetchExpenses]);
+
+    const token = getToken();
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
+    loadDashboardData();
+  }, [loadDashboardData, router]);
 
   const resetCreateForm = () => {
     setTitle("");
@@ -120,7 +121,13 @@ export default function FinanceDashboard() {
     setEditTitle(expense.title);
     setEditAmount(String(expense.amount));
     setEditCategory(expense.category);
-    setEditSpentAt(expense.spent_at);
+
+    // input type="date" 用に YYYY-MM-DD に整形
+    const formattedDate = expense.spent_at
+      ? new Date(expense.spent_at).toISOString().slice(0, 10)
+      : "";
+    setEditSpentAt(formattedDate);
+
     setEditMemo(expense.memo ?? "");
     setIsEditModalOpen(true);
   };
@@ -133,34 +140,22 @@ export default function FinanceDashboard() {
       return;
     }
 
-    const expenseData = {
-      title,
-      amount: Number(amount),
-      category,
-      spent_at: spentAt,
-      memo: memo || null,
-    };
-
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/expenses/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(expenseData),
+      await createExpense({
+        title,
+        amount: Number(amount),
+        category,
+        spent_at: spentAt,
+        memo: memo || null,
       });
 
-      if (!response.ok) {
-        throw new Error("登録に失敗しました");
-      }
-
       resetCreateForm();
-      await fetchExpenses();
+      await loadDashboardData();
     } catch (error) {
       console.error("Create error:", error);
-      alert("登録に失敗しました");
+      alert(error instanceof Error ? error.message : "登録に失敗しました");
     } finally {
       setIsSubmitting(false);
     }
@@ -176,34 +171,22 @@ export default function FinanceDashboard() {
       return;
     }
 
-    const expenseData = {
-      title: editTitle,
-      amount: Number(editAmount),
-      category: editCategory,
-      spent_at: editSpentAt,
-      memo: editMemo || null,
-    };
-
     setIsEditSubmitting(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/expenses/${editingId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(expenseData),
+      await updateExpense(editingId, {
+        title: editTitle,
+        amount: Number(editAmount),
+        category: editCategory,
+        spent_at: editSpentAt,
+        memo: editMemo || null,
       });
 
-      if (!response.ok) {
-        throw new Error("更新に失敗しました");
-      }
-
       closeEditModal();
-      await fetchExpenses();
+      await loadDashboardData();
     } catch (error) {
       console.error("Edit error:", error);
-      alert("更新に失敗しました");
+      alert(error instanceof Error ? error.message : "更新に失敗しました");
     } finally {
       setIsEditSubmitting(false);
     }
@@ -214,28 +197,31 @@ export default function FinanceDashboard() {
     if (!isConfirmed) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/expenses/${id}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        throw new Error("削除に失敗しました");
-      }
+      await deleteExpense(id);
 
       if (editingId === id) {
         closeEditModal();
       }
 
-      await fetchExpenses();
+      await loadDashboardData();
     } catch (error) {
       console.error("Delete error:", error);
-      alert("削除に失敗しました");
+      alert(error instanceof Error ? error.message : "削除に失敗しました");
     }
+  };
+
+  const handleLogout = () => {
+    removeToken();
+    router.push("/login");
   };
 
   const filteredExpenses = useMemo(() => {
     return expenses
-      .filter((e) => (selectedMonth ? e.spent_at.startsWith(selectedMonth) : true))
+      .filter((e) => {
+        if (!selectedMonth) return true;
+        const dateStr = new Date(e.spent_at).toISOString().slice(0, 7);
+        return dateStr === selectedMonth;
+      })
       .sort((a, b) => b.spent_at.localeCompare(a.spent_at));
   }, [expenses, selectedMonth]);
 
@@ -266,10 +252,13 @@ export default function FinanceDashboard() {
             </div>
             <div>
               <h1 className="text-xl font-bold">家計簿ダッシュボード</h1>
+              <p className="text-sm text-slate-500">
+                ログイン中: {userEmail || "取得中..."}
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
               <Calendar className="h-4 w-4 text-slate-400" />
               <input
@@ -289,6 +278,15 @@ export default function FinanceDashboard() {
                 月解除
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              <LogOut className="h-4 w-4" />
+              ログアウト
+            </button>
           </div>
         </header>
 
@@ -449,7 +447,9 @@ export default function FinanceDashboard() {
                         }}
                         itemStyle={{ color: "#1e293b" }}
                         formatter={(value) =>
-                          typeof value === "number" ? `¥${value.toLocaleString()}` : String(value ?? "")
+                          typeof value === "number"
+                            ? `¥${value.toLocaleString()}`
+                            : String(value ?? "")
                         }
                       />
                     </PieChart>
@@ -497,7 +497,9 @@ export default function FinanceDashboard() {
                           key={e.id}
                           className="transition-colors hover:bg-slate-50/50"
                         >
-                          <td className="px-6 py-4 text-slate-500">{e.spent_at}</td>
+                          <td className="px-6 py-4 text-slate-500">
+                            {new Date(e.spent_at).toLocaleDateString("ja-JP")}
+                          </td>
                           <td className="px-6 py-4 font-bold">{e.title}</td>
                           <td className="px-6 py-4">
                             <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
