@@ -22,8 +22,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://expense-app-git-main-takeru0412-debugs-projects.vercel.app",
-        # 本番URLが別であれば追加
-        # "https://expense-app.vercel.app",
+        "https://expense-app-rho-amber.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
